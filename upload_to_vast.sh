@@ -1,8 +1,22 @@
 #!/bin/bash
 # Simplified script to upload the csm_upload directory to Vast.ai
 
-# Set these variables
-VAST_INSTANCE_ID="18825257"  # Your instance ID from Vast.ai
+# Load environment variables from .env file
+if [ -f ".env" ]; then
+  echo "Loading environment variables from .env file..."
+  export $(grep -v '^#' .env | xargs)
+else
+  echo "Error: .env file not found. Please create one based on .env.example"
+  exit 1
+fi
+
+# Check if VAST_INSTANCE_ID is set
+if [ -z "$VAST_INSTANCE_ID" ]; then
+  echo "Error: VAST_INSTANCE_ID is not set in .env file"
+  exit 1
+fi
+
+echo "Using Vast.ai instance ID: $VAST_INSTANCE_ID"
 
 # Check if vastai CLI is installed
 if ! command -v vastai &> /dev/null; then

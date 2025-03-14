@@ -1,120 +1,169 @@
-# CSM
+# Conversational Speech Model (CSM) Deployment Guide
 
-**2025/03/13** - We are releasing the 1B CSM variant. The checkpoint is [hosted on Hugging Face](https://huggingface.co/sesame/csm_1b).
+This repository contains the implementation of the Conversational Speech Model (CSM), a state-of-the-art model for generating natural conversational speech based on the Llama-3.2-3B backbone.
 
----
+## Table of Contents
+- [Overview](#overview)
+- [Prerequisites](#prerequisites)
+- [Deployment on Vast.ai](#deployment-on-vastai)
+  - [Finding a Suitable Instance](#finding-a-suitable-instance)
+  - [Uploading Files](#uploading-files)
+  - [Setting Up the Environment](#setting-up-the-environment)
+  - [Training the Model](#training-the-model)
+- [Project Structure](#project-structure)
+- [Troubleshooting](#troubleshooting)
 
-CSM (Conversational Speech Model) is a speech generation model from [Sesame](https://www.sesame.com) that generates RVQ audio codes from text and audio inputs. The model architecture employs a [Llama](https://www.llama.com/) backbone and a smaller audio decoder that produces [Mimi](https://huggingface.co/kyutai/mimi) audio codes.
+## Overview
 
-A fine-tuned variant of CSM powers the [interactive voice demo](https://www.sesame.com/voicedemo) shown in our [blog post](https://www.sesame.com/research/crossing_the_uncanny_valley_of_voice).
+The Conversational Speech Model (CSM) is designed to generate natural-sounding conversational speech that crosses the uncanny valley. It builds upon the Llama-3.2-3B foundation model and is fine-tuned for conversational voice generation.
 
-A hosted [Hugging Face space](https://huggingface.co/spaces/sesame/csm-1b) is also available for testing audio generation.
+## Prerequisites
 
-## Requirements
+- [Vast.ai](https://vast.ai/) account
+- Vast.ai CLI installed (`pip install vast-ai-client`)
+- SSH client
+- Git
 
-* A CUDA-compatible GPU
-* The code has been tested on CUDA 12.4 and 12.6, but it may also work on other versions
-* Simiarly, Python 3.10 is recommended, but newer versions may be fine
-* For some audio operations, `ffmpeg` may be required
+## Deployment on Vast.ai
 
-### Setup
+### Finding a Suitable Instance
+
+To find a suitable instance for training the CSM model, use the Vast.ai CLI with the following command:
 
 ```bash
-git clone git@github.com:SesameAILabs/csm.git
-cd csm
-python3.10 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+vastai search offers 'reliability > 0.95 gpu_ram >= 16 dph < 1.5 num_gpus >= 1' -o 'dlperf_usd-'
 ```
 
-### Windows Setup
+This command searches for:
+- Instances with reliability > 95%
+- GPUs with at least 16GB RAM
+- Cost less than $1.50 per hour
+- At least 1 GPU
+- Sorted by deep learning performance per dollar (best value first)
 
-The `triton` package cannot be installed in Windows. Instead use `pip install triton-windows`.
+Recommended specifications:
+- **GPU**: RTX 4080S, RTX 4090, RTX 5080, or similar
+- **RAM**: At least 32GB
+- **Storage**: 100GB+ for model weights and datasets
+- **Cost**: $0.30-$0.80/hour for good performance/price ratio
 
-## Usage
+### Uploading Files
 
-Generate a sentence
+1. **Prepare the upload directory**:
+   The `csm_upload` directory should contain:
+   - `generator.py`
+   - `models.py`
+   - `requirements.txt`
+   - `train.py`
+   - `model_weights/` (containing model files)
 
-```python
-from huggingface_hub import hf_hub_download
-from generator import load_csm_1b
-import torchaudio
+2. **Use the upload script**:
+   The `upload_to_vast.sh` script automates the process of uploading files to your Vast.ai instance.
 
-model_path = hf_hub_download(repo_id="sesame/csm-1b", filename="ckpt.pt")
-generator = load_csm_1b(model_path, "cuda")
-audio = generator.generate(
-    text="Hello from Sesame.",
-    speaker=0,
-    context=[],
-    max_audio_length_ms=10_000,
-)
+   ```bash
+   # Make the script executable
+   chmod +x upload_to_vast.sh
+   
+   # Run the script
+   ./upload_to_vast.sh
+   ```
 
-torchaudio.save("audio.wav", audio.unsqueeze(0).cpu(), generator.sample_rate)
+   The script will:
+   - Check if the Vast.ai CLI is installed
+   - Verify your instance status
+   - Start the instance if it's not running
+   - Upload the files from the `csm_upload` directory
+
+### Setting Up the Environment
+
+Once the files are uploaded, SSH into your Vast.ai instance:
+
+```bash
+ssh -p <SSH_PORT> root@<SSH_IP>
 ```
 
-CSM sounds best when provided with context. You can prompt or provide context to the model using a `Segment` for each speaker utterance.
+Then run the setup script:
 
-```python
-speakers = [0, 1, 0, 0]
-transcripts = [
-    "Hey how are you doing.",
-    "Pretty good, pretty good.",
-    "I'm great.",
-    "So happy to be speaking to you.",
-]
-audio_paths = [
-    "utterance_0.wav",
-    "utterance_1.wav",
-    "utterance_2.wav",
-    "utterance_3.wav",
-]
-
-def load_audio(audio_path):
-    audio_tensor, sample_rate = torchaudio.load(audio_path)
-    audio_tensor = torchaudio.functional.resample(
-        audio_tensor.squeeze(0), orig_freq=sample_rate, new_freq=generator.sample_rate
-    )
-    return audio_tensor
-
-segments = [
-    Segment(text=transcript, speaker=speaker, audio=load_audio(audio_path))
-    for transcript, speaker, audio_path in zip(transcripts, speakers, audio_paths)
-]
-audio = generator.generate(
-    text="Me too, this is some cool stuff huh?",
-    speaker=1,
-    context=segments,
-    max_audio_length_ms=10_000,
-)
-
-torchaudio.save("audio.wav", audio.unsqueeze(0).cpu(), generator.sample_rate)
+```bash
+cd csm_upload
+chmod +x setup_vast.sh
+./setup_vast.sh
 ```
 
-## FAQ
+This will:
+- Install required dependencies
+- Set up the Python environment
+- Prepare the model for training
 
-**Does this model come with any voices?**
+### Training the Model
 
-The model open sourced here is a base generation model. It is capable of producing a variety of voices, but it has not been fine-tuned on any specific voice.
+To start training the CSM model:
 
-**Can I converse with the model?**
+```bash
+cd csm_upload
+python train.py
+```
 
-CSM is trained to be an audio generation model and not a general purpose multimodal LLM. It cannot generate text. We suggest using a separate LLM for text generation.
+You can monitor the training progress through the logs and use TensorBoard if configured.
 
-**Does it support other languages?**
+## Project Structure
 
-The model has some capacity for non-English languages due to data contamination in the training data, but it likely won't do well.
+```
+csm/
+├── csm_upload/              # Main directory for upload
+│   ├── generator.py         # Speech generation code
+│   ├── models.py            # Model definitions
+│   ├── requirements.txt     # Python dependencies
+│   ├── train.py             # Training script
+│   └── model_weights/       # Directory for model weights
+├── upload_to_vast.sh        # Script to upload files to Vast.ai
+├── setup_vast.sh            # Setup script for the Vast.ai instance
+└── README.md                # This documentation
+```
 
-## Misuse and abuse ⚠️
+## Troubleshooting
 
-This project provides a high-quality speech generation model for research and educational purposes. While we encourage responsible and ethical use, we **explicitly prohibit** the following:
+### Common Issues
 
-- **Impersonation or Fraud**: Do not use this model to generate speech that mimics real individuals without their explicit consent.
-- **Misinformation or Deception**: Do not use this model to create deceptive or misleading content, such as fake news or fraudulent calls.
-- **Illegal or Harmful Activities**: Do not use this model for any illegal, harmful, or malicious purposes.
+1. **Instance not found**:
+   - Verify your instance ID in the `upload_to_vast.sh` script
+   - Check if your instance is active in the Vast.ai console
 
-By using this model, you agree to comply with all applicable laws and ethical guidelines. We are **not responsible** for any misuse, and we strongly condemn unethical applications of this technology.
+2. **Upload failures**:
+   - Ensure your instance is in the "running" state
+   - Check your SSH connection details
+   - Verify you have sufficient storage on the instance
 
----
+3. **Training errors**:
+   - Check CUDA availability with `torch.cuda.is_available()`
+   - Ensure all dependencies are installed correctly
+   - Verify model weights are properly loaded
 
-## Authors
-Johan Schalkwyk, Ankit Kumar, Dan Lyth, Sefik Emre Eskimez, Zack Hodari, Cinjon Resnick, Ramon Sanabria, Raven Jiang, and the Sesame team.
+### Vast.ai CLI Commands
+
+Useful Vast.ai CLI commands:
+
+```bash
+# List your instances
+vastai show instances
+
+# Start an existing instance
+vastai start instance <INSTANCE_ID>
+
+# Stop an instance
+vastai stop instance <INSTANCE_ID>
+
+# Get SSH connection details
+vastai show instances | grep <INSTANCE_ID>
+
+# Create a new instance from an offer
+vastai create instance <OFFER_ID> --image <DOCKER_IMAGE> --disk <DISK_SIZE_GB> --ssh --direct
+
+# Example: Create a new instance with PyTorch
+vastai create instance 18308720 --image vastai/pytorch:2.5.1-cuda-12.1.1 --disk 100 --ssh --direct
+
+# Get SSH connection details to prove it was made
+vastai show instances 
+```
+
+For more information, refer to the [Vast.ai documentation](https://vast.ai/docs/).
